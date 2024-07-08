@@ -15,6 +15,12 @@
     in {
       overlays.default = final: prev: {
         diskann = final.callPackage ./nix {src=self;};
+        diskann_clang = final.callPackage ./nix {
+          src=self;
+          stdenv = pkgs.llvmPackages_18.stdenv;
+          llvmPackages=pkgs.llvmPackages_18;
+        };
+        ccls_18 = prev.ccls.override({llvmPackages=final.llvmPackages_18;});
       };
 
       packages.x86_64-linux = {
@@ -24,15 +30,17 @@
       };
 
       devShells.x86_64-linux = {
-        default = pkgs.mkShell {
+        #dev env with clang compiler
+        default = pkgs.mkShell.override { stdenv = pkgs.llvmPackages_18.stdenv; } {
 
-          inputsFrom = [ pkgs.diskann ];
+          inputsFrom = [ pkgs.diskann_clang ];
           buildInputs = [
-            pkgs.ccls
+            pkgs.ccls_18
             pkgs.gdb
           ];
 
-          shellHook = '''';
+          shellHook = ''
+          '';
         };
         exp = pkgs.mkShell {
           buildInputs = [

@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT license.
 
-set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+endif()
 
 find_package(Boost COMPONENTS unit_test_framework)
 

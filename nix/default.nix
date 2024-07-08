@@ -1,11 +1,13 @@
 {
   src,
+  lib,
   stdenv,
   cmake,
   libaio,
   boost,
   mkl,
   gperftools,
+  llvmPackages ? null,
 }:
 stdenv.mkDerivation {
   pname = "diskann";
@@ -15,7 +17,8 @@ stdenv.mkDerivation {
   hardeningDisable = [ "all" ];
 
   nativeBuildInputs = [cmake];
-  buildInputs=[libaio boost mkl gperftools];
+  buildInputs=[libaio boost mkl gperftools]
+              ++ lib.optional (llvmPackages != null) llvmPackages.openmp.dev;
   cmakeFlags = [
     "-DOMP_PATH=${mkl}/lib"
     "-DMKL_PATH=${mkl}/lib"
