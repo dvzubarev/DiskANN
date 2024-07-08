@@ -378,3 +378,4 @@ gperftools
 
 # Rust
 rust/target
+/.direnv/
