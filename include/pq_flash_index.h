@@ -15,6 +15,7 @@
 #include "scratch.h"
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
+#include "abstract_data_store.h"
 
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
@@ -41,7 +42,8 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
                                                    const char *compressed_filepath);
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                   const char *pivots_filepath, const char *compressed_filepath);
+                                                   const char *pivots_filepath, const char *pq_compressed_filepath,
+                                                   const char *ext_compressed_filepath);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
@@ -74,12 +76,29 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
                                               QueryStats *stats = nullptr);
-
     DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_filter, const LabelT &filter_label,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
                                               QueryStats *stats = nullptr);
+
+    DISKANN_DLLEXPORT void cached_beam_search(const T *query1, const T *compressed_query1, const uint64_t k_search, const uint64_t l_search,
+                                              uint64_t *indices, float *distances, const uint64_t beam_width, QueryStats *stats);
+
+    DISKANN_DLLEXPORT void cached_beam_search_impl(const T *query1,
+                                                   SSDThreadData<T>* req_data,
+                                                   const std::function<void(const uint32_t*,
+                                                                            const uint64_t,
+                                                                            float *)>& compute_dists,
+                                                   float query_norm,
+                                                   const uint64_t k_search,
+                                                   const uint64_t l_search,
+                                                   uint64_t *indices, float *distances,
+                                                   const uint64_t beam_width,
+                                                   const bool use_filter, const LabelT &filter_label,
+                                                   const uint32_t io_limit,
+                                                   const bool use_reorder_data,
+                                                   QueryStats *stats);
 
     DISKANN_DLLEXPORT LabelT get_converted_label(const std::string &filter_label);
 
@@ -184,9 +203,17 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     uint64_t _n_chunks;
     FixedChunkPQTable _pq_table;
 
+
+    //Compressed data
+    std::shared_ptr<AbstractDataStore<T>> _compressed_data;
+    uint64_t _compressed_vec_dim = 0;
+    uint64_t _aligned_compressed_vec_dim = 0;
+
+
     // distance comparator
     std::shared_ptr<Distance<T>> _dist_cmp;
     std::shared_ptr<Distance<float>> _dist_cmp_float;
+    std::unique_ptr<Distance<T>> _compressed_dist_cmp;
 
     // for very large datasets: we use PQ even for the disk resident index
     bool _use_disk_index_pq = false;

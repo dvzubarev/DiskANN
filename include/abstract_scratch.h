@@ -23,6 +23,10 @@ template <typename data_t> class AbstractScratch
     {
         return _aligned_query_T;
     }
+    data_t *aligned_compressed_query_T()
+    {
+        return _aligned_compressed_query_T;
+    }
     PQScratch<data_t> *pq_scratch()
     {
         return _pq_scratch;
@@ -30,6 +34,7 @@ template <typename data_t> class AbstractScratch
 
   protected:
     data_t *_aligned_query_T = nullptr;
+    data_t *_aligned_compressed_query_T = nullptr;
     PQScratch<data_t> *_pq_scratch = nullptr;
 };
 } // namespace diskann

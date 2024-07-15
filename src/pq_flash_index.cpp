@@ -8,6 +8,8 @@
 #include "pq_scratch.h"
 #include "pq_flash_index.h"
 #include "cosine_similarity.h"
+#include "in_mem_data_store.h"
+
 
 #ifdef _WINDOWS
 #include "windows_aligned_file_reader.h"
@@ -53,6 +55,7 @@ PQFlashIndex<T, LabelT>::PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileRe
 
     this->_dist_cmp.reset(diskann::get_distance_function<T>(metric_to_invoke));
     this->_dist_cmp_float.reset(diskann::get_distance_function<float>(metric_to_invoke));
+    this->_compressed_dist_cmp.reset(diskann::get_distance_function<T>(metric_to_invoke));
 }
 
 template <typename T, typename LabelT> PQFlashIndex<T, LabelT>::~PQFlashIndex()
@@ -131,7 +134,8 @@ void PQFlashIndex<T, LabelT>::setup_thread_data(uint64_t nthreads, uint64_t visi
     {
 #pragma omp critical
         {
-            SSDThreadData<T> *data = new SSDThreadData<T>(this->_aligned_dim, visited_reserve);
+            SSDThreadData<T> *data = new SSDThreadData<T>(this->_aligned_dim, this->_aligned_compressed_vec_dim,
+                                                          visited_reserve);
             this->reader->register_thread();
             data->ctx = this->reader->get_ctx();
             this->_thread_data.push(data);
@@ -778,12 +782,13 @@ template <typename T, typename LabelT> int PQFlashIndex<T, LabelT>::load(uint32_
     std::string pq_table_bin = std::string(index_prefix) + "_pq_pivots.bin";
     std::string pq_compressed_vectors = std::string(index_prefix) + "_pq_compressed.bin";
     std::string _disk_index_file = std::string(index_prefix) + "_disk.index";
+    std::string ext_compressed_data = std::string(index_prefix) + "_ext_compressed.bin";
 #ifdef EXEC_ENV_OLS
     return load_from_separate_paths(files, num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
                                     pq_compressed_vectors.c_str());
 #else
     return load_from_separate_paths(num_threads, _disk_index_file.c_str(), pq_table_bin.c_str(),
-                                    pq_compressed_vectors.c_str());
+                                    pq_compressed_vectors.c_str(), ext_compressed_data.c_str());
 #endif
 }
 
@@ -796,12 +801,14 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(diskann::MemoryMappedFiles
 #else
 template <typename T, typename LabelT>
 int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                                      const char *pivots_filepath, const char *compressed_filepath)
+                                                      const char *pivots_filepath, const char *compressed_filepath,
+                                                      const char *ext_compressed_filepath)
 {
 #endif
     std::string pq_table_bin = pivots_filepath;
     std::string pq_compressed_vectors = compressed_filepath;
     std::string _disk_index_file = index_filepath;
+    this->_disk_index_file = index_filepath;
     std::string medoids_file = std::string(_disk_index_file) + "_medoids.bin";
     std::string centroids_file = std::string(_disk_index_file) + "_centroids.bin";
 
@@ -815,10 +822,11 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
 #ifdef EXEC_ENV_OLS
     get_bin_metadata(files, pq_table_bin, pq_file_num_centroids, pq_file_dim, METADATA_SIZE);
 #else
+    //pq_file_dim is dimension of original vectors
+    //We have to keep this file around, since its the only place where we can obtain original dimension
+    //meta from index (disk_ndims) is not suitable see comment below.
     get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim, METADATA_SIZE);
 #endif
-
-    this->_disk_index_file = _disk_index_file;
 
     if (pq_file_num_centroids != 256)
     {
@@ -830,17 +838,36 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     // will change later if we use PQ on disk or if we are using
     // inner product without PQ
     this->_disk_bytes_per_point = this->_data_dim * sizeof(T);
-    this->_aligned_dim = ROUND_UP(pq_file_dim, 8);
+    this->_aligned_dim = ROUND_UP(this->_data_dim, 8);
 
-    size_t npts_u64, nchunks_u64;
+    if(file_exists(pq_compressed_vectors)){
+
+        size_t npts_u64, nchunks_u64;
 #ifdef EXEC_ENV_OLS
     diskann::load_bin<uint8_t>(files, pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #else
     diskann::load_bin<uint8_t>(pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #endif
+        this->_num_points = npts_u64;
+        this->_n_chunks = nchunks_u64;
+    }else if (file_exists(ext_compressed_filepath)) {
+        size_t points_num;
+        diskann::get_bin_metadata(ext_compressed_filepath, points_num, _compressed_vec_dim);
+        this->_num_points = points_num;
+        this->_aligned_compressed_vec_dim = ROUND_UP(this->_compressed_vec_dim, 8);
 
-    this->_num_points = npts_u64;
-    this->_n_chunks = nchunks_u64;
+        _compressed_data = std::make_shared<InMemDataStore<T>>(points_num, _compressed_vec_dim,
+                                                               std::move(_compressed_dist_cmp));
+        _compressed_data->load(ext_compressed_filepath);
+        diskann::cout
+        << "Loaded in-memory externally compressed vectors. #points: " << _num_points
+        << " #dim: " << _data_dim << " #aligned_dim: " << _aligned_dim
+        << " #compressed_dim: " << _compressed_vec_dim<<" #aligned_compressed_dim: "<<_aligned_compressed_vec_dim
+        << std::endl;
+
+    }else{
+        throw diskann::ANNException("Either pq compressed or ext compressed should be provided for pq_flash_index", -1);
+    }
 #ifdef EXEC_ENV_OLS
     if (files.fileExists(labels_file))
     {
@@ -980,23 +1007,25 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
         }
     }
 
+    if (file_exists(pq_compressed_vectors)){
 #ifdef EXEC_ENV_OLS
-    _pq_table.load_pq_centroid_bin(files, pq_table_bin.c_str(), nchunks_u64);
+    _pq_table.load_pq_centroid_bin(files, pq_table_bin.c_str(), this->_n_chunks);
 #else
-    _pq_table.load_pq_centroid_bin(pq_table_bin.c_str(), nchunks_u64);
+    _pq_table.load_pq_centroid_bin(pq_table_bin.c_str(), this->_n_chunks);
 #endif
 
-    diskann::cout << "Loaded PQ centroids and in-memory compressed vectors. #points: " << _num_points
-                  << " #dim: " << _data_dim << " #aligned_dim: " << _aligned_dim << " #chunks: " << _n_chunks
-                  << std::endl;
+        diskann::cout << "Loaded PQ centroids and in-memory compressed vectors. #points: " << _num_points
+                    << " #dim: " << _data_dim << " #aligned_dim: " << _aligned_dim << " #chunks: " << _n_chunks
+                    << std::endl;
 
-    if (_n_chunks > MAX_PQ_CHUNKS)
-    {
-        std::stringstream stream;
-        stream << "Error loading index. Ensure that max PQ bytes for in-memory "
-                  "PQ data does not exceed "
-               << MAX_PQ_CHUNKS << std::endl;
-        throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+        if (_n_chunks > MAX_PQ_CHUNKS)
+        {
+            std::stringstream stream;
+            stream << "Error loading index. Ensure that max PQ bytes for in-memory "
+                    "PQ data does not exceed "
+                << MAX_PQ_CHUNKS << std::endl;
+            throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
     }
 
     std::string disk_pq_pivots_path = this->_disk_index_file + "_pq_pivots.bin";
@@ -1304,7 +1333,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     // calculations we need aligned data)
     float query_norm = 0;
     T *aligned_query_T = query_scratch->aligned_query_T();
-    float *query_float = pq_query_scratch->aligned_query_float;
     float *query_rotated = pq_query_scratch->rotated_query;
 
     // normalization step. for cosine, we simply normalize the query
@@ -1338,15 +1366,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         pq_query_scratch->initialize(this->_data_dim, aligned_query_T);
     }
 
-    // pointers to buffers for data
-    T *data_buf = query_scratch->coord_scratch;
-    _mm_prefetch((char *)data_buf, _MM_HINT_T1);
-
-    // sector scratch
-    char *sector_scratch = query_scratch->sector_scratch;
-    uint64_t &sector_scratch_idx = query_scratch->sector_idx;
-    const uint64_t num_sectors_per_node =
-        _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
 
     // query <-> PQ chunk centers distances
     _pq_table.preprocess_query(query_rotated); // center the query and rotate if
@@ -1355,7 +1374,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     _pq_table.populate_chunk_distances(query_rotated, pq_dists);
 
     // query <-> neighbor list
-    float *dist_scratch = pq_query_scratch->aligned_dist_scratch;
     uint8_t *pq_coord_scratch = pq_query_scratch->aligned_pq_coord_scratch;
 
     // lambda to batch compute query<-> node distances in PQ space
@@ -1364,12 +1382,144 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         diskann::aggregate_coords(ids, n_ids, this->data, this->_n_chunks, pq_coord_scratch);
         diskann::pq_dist_lookup(pq_coord_scratch, n_ids, this->_n_chunks, pq_dists, dists_out);
     };
+    cached_beam_search_impl(query1, data, compute_dists, query_norm,
+                            k_search, l_search, indices, distances,
+                            beam_width,
+                            use_filter, filter_label,
+                            io_limit, use_reorder_data, stats);
+}
+
+//overload for searching on externally compressed vectors
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const T *compressed_query1, const uint64_t k_search, const uint64_t l_search,
+                                                 uint64_t *indices, float *distances, const uint64_t beam_width, QueryStats *stats)
+{
+
+    uint64_t num_sector_per_nodes = DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
+    if (beam_width > num_sector_per_nodes * defaults::MAX_N_SECTOR_READS)
+        throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
+                           __LINE__);
+
+    ScratchStoreManager<SSDThreadData<T>> manager(this->_thread_data);
+    auto data = manager.scratch_space();
+    IOContext &ctx = data->ctx;
+    auto query_scratch = &(data->scratch);
+    //pq_query_scratch holds alse query_float that seems to be needed
+    auto pq_query_scratch = query_scratch->pq_scratch();
+
+    // reset query scratch
+    query_scratch->reset();
+
+    // copy query to thread specific aligned and allocated memory (for distance
+    // calculations we need aligned data)
+    float query_norm = 0;
+    float compressed_query_norm = 0;
+    T *aligned_query_T = query_scratch->aligned_query_T();
+    T *aligned_compressed_query_T = query_scratch->aligned_compressed_query_T();
+    float *query_float = pq_query_scratch->aligned_query_float;
+
+    // normalization step. for cosine, we simply normalize the query
+    // for mips, we normalize the first d-1 dims, and add a 0 for last dim, since an extra coordinate was used to
+    // convert MIPS to L2 search
+    if (metric == diskann::Metric::INNER_PRODUCT || metric == diskann::Metric::COSINE)
+    {
+        //TODO not sure about normalization of compressed vectors
+        //anyway we will use l2 for now
+        uint64_t inherent_dim = (metric == diskann::Metric::COSINE) ? this->_data_dim : (uint64_t)(this->_data_dim - 1);
+        for (size_t i = 0; i < inherent_dim; i++)
+        {
+            aligned_query_T[i] = query1[i];
+            query_norm += query1[i] * query1[i];
+        }
+        uint64_t compressed_inherent_dim = (metric == diskann::Metric::COSINE) ?
+                                           this->_compressed_vec_dim :
+                                           (uint64_t)(this->_compressed_vec_dim - 1);
+        for (size_t i = 0; i < compressed_inherent_dim; i++)
+        {
+            aligned_compressed_query_T[i] = compressed_query1[i];
+            compressed_query_norm += compressed_query1[i] * compressed_query1[i];
+        }
+
+        if (metric == diskann::Metric::INNER_PRODUCT){
+            aligned_query_T[this->_data_dim - 1] = 0;
+            aligned_compressed_query_T[this->_compressed_vec_dim - 1] = 0;
+        }
+
+        query_norm = std::sqrt(query_norm);
+        compressed_query_norm = std::sqrt(compressed_query_norm);
+
+        for (size_t i = 0; i < inherent_dim; i++)
+        {
+            aligned_query_T[i] = (T)(aligned_query_T[i] / query_norm);
+        }
+        pq_query_scratch->initialize(this->_data_dim, aligned_query_T);
+        //initialize query_float
+
+
+        for (size_t i = 0; i < compressed_inherent_dim; i++)
+        {
+            aligned_compressed_query_T[i] = (T)(aligned_compressed_query_T[i] / compressed_query_norm);
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < this->_data_dim; i++)
+            aligned_query_T[i] = query1[i];
+        for (size_t i = 0; i < this->_compressed_vec_dim; i++)
+            aligned_compressed_query_T[i] = compressed_query1[i];
+        //initialize query_float
+        pq_query_scratch->initialize(this->_data_dim, aligned_query_T);
+    }
+
+    // lambda to batch compute query<-> node distances
+    auto compute_dists = [this, query_scratch](const uint32_t *ids, const uint64_t n_ids,
+                                               float *dists_out) {
+        _compressed_data->get_distance(query_scratch->aligned_compressed_query_T(),
+                                       ids, n_ids, dists_out, query_scratch);
+    };
+    LabelT dummy_filter = 0;
+    auto io_limit = std::numeric_limits<uint32_t>::max();
+    cached_beam_search_impl(query1, data, compute_dists, query_norm,
+                            k_search, l_search, indices, distances,
+                            beam_width,
+                            false, dummy_filter, io_limit, false, stats);
+}
+
+
+template <typename T, typename LabelT>
+void PQFlashIndex<T, LabelT>::cached_beam_search_impl(const T *query1,
+                                                      SSDThreadData<T>* req_data,
+                                                      const std::function<void(const uint32_t*,
+                                                                               const uint64_t,
+                                                                               float *)>& compute_dists,
+                                                      float query_norm,
+                                                      const uint64_t k_search,
+                                                      const uint64_t l_search,
+                                                      uint64_t *indices, float *distances,
+                                                      const uint64_t beam_width,
+                                                      const bool use_filter, const LabelT &filter_label,
+                                                      const uint32_t io_limit,
+                                                      const bool use_reorder_data,
+                                                      QueryStats *stats)
+{
     Timer query_timer, io_timer, cpu_timer;
 
+    auto query_scratch = &(req_data->scratch);
+    T *aligned_query_T = query_scratch->aligned_query_T();
+    // pointers to buffers for data
+    T *data_buf = query_scratch->coord_scratch;
+    _mm_prefetch((char *)data_buf, _MM_HINT_T1);
+
+
+    auto ctx = req_data->ctx;
     tsl::robin_set<uint64_t> &visited = query_scratch->visited;
     NeighborPriorityQueue &retset = query_scratch->retset;
     retset.reserve(l_search);
     std::vector<Neighbor> &full_retset = query_scratch->full_retset;
+
+    auto pq_query_scratch = query_scratch->pq_scratch();
+    float *query_float = pq_query_scratch->aligned_query_float;
+    float *dist_scratch = pq_query_scratch->aligned_dist_scratch;
 
     uint32_t best_medoid = 0;
     float best_dist = (std::numeric_limits<float>::max)();
@@ -1413,6 +1563,14 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     compute_dists(&best_medoid, 1, dist_scratch);
     retset.insert(Neighbor(best_medoid, dist_scratch[0]));
     visited.insert(best_medoid);
+
+    // sector scratch
+    char *sector_scratch = query_scratch->sector_scratch;
+    uint64_t &sector_scratch_idx = query_scratch->sector_idx;
+    const uint64_t num_sectors_per_node =
+        _nnodes_per_sector > 0 ? 1 : DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
+
+
 
     uint32_t cmps = 0;
     uint32_t hops = 0;

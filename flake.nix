@@ -36,17 +36,13 @@
           inputsFrom = [ pkgs.diskann_clang ];
           buildInputs = [
             pkgs.ccls_18
+            #for llvm-symbolizer
+            pkgs.llvmPackages_18.libllvm
             pkgs.gdb
           ];
 
           shellHook = ''
           '';
-        };
-        exp = pkgs.mkShell {
-          buildInputs = [
-            pkgs.diskann
-          ];
-          shellHook = '''';
         };
       };
     };

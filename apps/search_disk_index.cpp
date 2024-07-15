@@ -4,6 +4,7 @@
 #include "common_includes.h"
 #include <boost/program_options.hpp>
 
+#include "ann_exception.h"
 #include "index.h"
 #include "disk_utils.h"
 #include "math_utils.h"
@@ -49,7 +50,7 @@ void print_stats(std::string category, std::vector<float> percentiles, std::vect
 
 template <typename T, typename LabelT = uint32_t>
 int search_disk_index(diskann::Metric &metric, const std::string &index_path_prefix,
-                      const std::string &result_output_prefix, const std::string &query_file, std::string &gt_file,
+                      const std::string &result_output_prefix, const std::string &query_file_prefix, std::string &gt_file,
                       const uint32_t num_threads, const uint32_t recall_at, const uint32_t beamwidth,
                       const uint32_t num_nodes_to_cache, const uint32_t search_io_limit,
                       const std::vector<uint32_t> &Lvec, const float fail_if_recall_below,
@@ -72,7 +73,22 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     uint32_t *gt_ids = nullptr;
     float *gt_dists = nullptr;
     size_t query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
-    diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim, query_aligned_dim);
+    diskann::load_aligned_bin<T>(query_file_prefix + ".fbin", query, query_num, query_dim, query_aligned_dim);
+
+    // load compressed query vectors if they exist
+    T *compressed_query = nullptr;
+    size_t compressed_num, compressed_query_dim, aligned_compressed_query_dim;
+    auto compressed_query_file = query_file_prefix + "_compressed.fbin";
+    if (file_exists(compressed_query_file)) {
+        diskann::load_aligned_bin<T>(compressed_query_file, compressed_query,
+                                     compressed_num, compressed_query_dim,
+                                     aligned_compressed_query_dim);
+        if (compressed_num != query_num) {
+            throw diskann::ANNException("Compressed points num != original vectors num", -1);
+        }
+
+    }
+
 
     bool filtered_search = false;
     if (!query_filters.empty())
@@ -229,10 +245,21 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         {
             if (!filtered_search)
             {
-                _pFlashIndex->cached_beam_search(query + (i * query_aligned_dim), recall_at, L,
-                                                 query_result_ids_64.data() + (i * recall_at),
-                                                 query_result_dists[test_id].data() + (i * recall_at),
-                                                 optimized_beamwidth, use_reorder_data, stats + i);
+                if (!compressed_query) {
+
+                    _pFlashIndex->cached_beam_search(query + (i * query_aligned_dim), recall_at, L,
+                                                     query_result_ids_64.data() + (i * recall_at),
+                                                     query_result_dists[test_id].data() + (i * recall_at),
+                                                     optimized_beamwidth, use_reorder_data, stats + i);
+                }else{
+                    _pFlashIndex->cached_beam_search(query + (i * query_aligned_dim),
+                                                     compressed_query + (i * aligned_compressed_query_dim),
+                                                     recall_at, L,
+                                                     query_result_ids_64.data() + (i * recall_at),
+                                                     query_result_dists[test_id].data() + (i * recall_at),
+                                                     optimized_beamwidth, stats + i);
+                }
+
             }
             else
             {
@@ -305,6 +332,9 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     }
 
     diskann::aligned_free(query);
+    diskann::aligned_free(compressed_query);
+    delete [] gt_ids;
+    delete [] gt_dists;
     if (warmup != nullptr)
         diskann::aligned_free(warmup);
     return best_recall >= fail_if_recall_below ? 0 : -1;
