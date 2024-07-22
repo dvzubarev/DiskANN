@@ -22,7 +22,7 @@
 namespace diskann
 {
 
-template <typename T, typename LabelT = uint32_t> class PQFlashIndex
+template <typename T, typename CT = T, typename LabelT = uint32_t> class PQFlashIndex
 {
   public:
     DISKANN_DLLEXPORT PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileReader,
@@ -82,11 +82,11 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
                                               const uint32_t io_limit, const bool use_reorder_data = false,
                                               QueryStats *stats = nullptr);
 
-    DISKANN_DLLEXPORT void cached_beam_search(const T *query1, const T *compressed_query1, const uint64_t k_search, const uint64_t l_search,
+    DISKANN_DLLEXPORT void cached_beam_search(const T *query1, const CT *compressed_query1, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *indices, float *distances, const uint64_t beam_width, QueryStats *stats);
 
     DISKANN_DLLEXPORT void cached_beam_search_impl(const T *query1,
-                                                   SSDThreadData<T>* req_data,
+                                                   SSDThreadData<T, CT>* req_data,
                                                    const std::function<void(const uint32_t*,
                                                                             const uint64_t,
                                                                             float *)>& compute_dists,
@@ -205,7 +205,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 
 
     //Compressed data
-    std::shared_ptr<AbstractDataStore<T>> _compressed_data;
+    std::shared_ptr<AbstractDataStore<CT>> _compressed_data;
     uint64_t _compressed_vec_dim = 0;
     uint64_t _aligned_compressed_vec_dim = 0;
 
@@ -213,7 +213,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     // distance comparator
     std::shared_ptr<Distance<T>> _dist_cmp;
     std::shared_ptr<Distance<float>> _dist_cmp_float;
-    std::unique_ptr<Distance<T>> _compressed_dist_cmp;
+    std::unique_ptr<Distance<CT>> _compressed_dist_cmp;
 
     // for very large datasets: we use PQ even for the disk resident index
     bool _use_disk_index_pq = false;
@@ -241,7 +241,7 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     tsl::robin_map<uint32_t, T *> _coord_cache;
 
     // thread-specific scratch
-    ConcurrentQueue<SSDThreadData<T> *> _thread_data;
+    ConcurrentQueue<SSDThreadData<T, CT> *> _thread_data;
     uint64_t _max_nthreads;
     bool _load_flag = false;
     bool _count_visited_nodes = false;

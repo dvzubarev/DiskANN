@@ -150,16 +150,26 @@ template <typename T> class SSDQueryScratch : public AbstractScratch<T>
     NeighborPriorityQueue retset;
     std::vector<Neighbor> full_retset;
 
-    SSDQueryScratch(size_t aligned_dim, size_t aligned_compressed_dim, size_t visited_reserve);
+    SSDQueryScratch(size_t aligned_dim, size_t visited_reserve);
     ~SSDQueryScratch();
 
     void reset();
 };
 
-template <typename T> class SSDThreadData
+template <typename T> class BasicScrath : public AbstractScratch<T>
+{
+  public:
+    BasicScrath(size_t aligned_dim);
+    ~BasicScrath();
+    void reset();
+};
+
+
+template <typename T, typename CT=T> class SSDThreadData
 {
   public:
     SSDQueryScratch<T> scratch;
+    BasicScrath<CT> compressed_data_scratch;
     IOContext ctx;
 
     SSDThreadData(size_t aligned_dim, size_t aligned_compressed_dim, size_t visited_reserve);

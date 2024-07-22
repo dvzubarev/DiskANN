@@ -791,8 +791,8 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 
 // optimizes the beamwidth to maximize QPS for a given L_search subject to
 // 99.9 latency not blowing up
-template <typename T, typename LabelT>
-uint32_t optimize_beamwidth(std::unique_ptr<diskann::PQFlashIndex<T, LabelT>> &pFlashIndex, T *tuning_sample,
+template <typename T, typename CT, typename LabelT>
+uint32_t optimize_beamwidth(std::unique_ptr<diskann::PQFlashIndex<T, CT, LabelT>> &pFlashIndex, T *tuning_sample,
                             uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L,
                             uint32_t nthreads, uint32_t start_bw)
 {
@@ -1406,24 +1406,27 @@ template DISKANN_DLLEXPORT float *load_warmup<float>(MemoryMappedFiles &files, c
                                                      uint64_t warmup_aligned_dim);
 #endif
 
-template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<int8_t, uint32_t>(
-    std::unique_ptr<diskann::PQFlashIndex<int8_t, uint32_t>> &pFlashIndex, int8_t *tuning_sample,
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<int8_t, int8_t, uint32_t>(
+    std::unique_ptr<diskann::PQFlashIndex<int8_t, int8_t, uint32_t>> &pFlashIndex, int8_t *tuning_sample,
     uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
-template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<uint8_t, uint32_t>(
-    std::unique_ptr<diskann::PQFlashIndex<uint8_t, uint32_t>> &pFlashIndex, uint8_t *tuning_sample,
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<uint8_t, uint8_t, uint32_t>(
+    std::unique_ptr<diskann::PQFlashIndex<uint8_t, uint8_t, uint32_t>> &pFlashIndex, uint8_t *tuning_sample,
     uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
-template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float, uint32_t>(
-    std::unique_ptr<diskann::PQFlashIndex<float, uint32_t>> &pFlashIndex, float *tuning_sample,
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float, float, uint32_t>(
+    std::unique_ptr<diskann::PQFlashIndex<float, float, uint32_t>> &pFlashIndex, float *tuning_sample,
+    uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float, uint8_t, uint32_t>(
+    std::unique_ptr<diskann::PQFlashIndex<float, uint8_t, uint32_t>> &pFlashIndex, float *tuning_sample,
     uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
 
-template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<int8_t, uint16_t>(
-    std::unique_ptr<diskann::PQFlashIndex<int8_t, uint16_t>> &pFlashIndex, int8_t *tuning_sample,
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<int8_t, int8_t, uint16_t>(
+    std::unique_ptr<diskann::PQFlashIndex<int8_t, int8_t, uint16_t>> &pFlashIndex, int8_t *tuning_sample,
     uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
-template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<uint8_t, uint16_t>(
-    std::unique_ptr<diskann::PQFlashIndex<uint8_t, uint16_t>> &pFlashIndex, uint8_t *tuning_sample,
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<uint8_t, uint8_t, uint16_t>(
+    std::unique_ptr<diskann::PQFlashIndex<uint8_t, uint8_t, uint16_t>> &pFlashIndex, uint8_t *tuning_sample,
     uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
-template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float, uint16_t>(
-    std::unique_ptr<diskann::PQFlashIndex<float, uint16_t>> &pFlashIndex, float *tuning_sample,
+template DISKANN_DLLEXPORT uint32_t optimize_beamwidth<float, float, uint16_t>(
+    std::unique_ptr<diskann::PQFlashIndex<float, float, uint16_t>> &pFlashIndex, float *tuning_sample,
     uint64_t tuning_sample_num, uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads, uint32_t start_bw);
 
 template DISKANN_DLLEXPORT int build_disk_index<int8_t, uint32_t>(const char *dataFilePath, const char *indexFilePath,

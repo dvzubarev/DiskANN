@@ -11,7 +11,6 @@
           overlays = [ self.overlays.default ];
           config = {
             allowUnfree = true;
-            cudaSupport=true;
           };
         };
     in {

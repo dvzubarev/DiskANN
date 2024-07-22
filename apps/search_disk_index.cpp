@@ -48,7 +48,7 @@ void print_stats(std::string category, std::vector<float> percentiles, std::vect
     diskann::cout << std::endl;
 }
 
-template <typename T, typename LabelT = uint32_t>
+template <typename T,  typename CT = T, typename LabelT = uint32_t>
 int search_disk_index(diskann::Metric &metric, const std::string &index_path_prefix,
                       const std::string &result_output_prefix, const std::string &query_file_prefix, std::string &gt_file,
                       const uint32_t num_threads, const uint32_t recall_at, const uint32_t beamwidth,
@@ -76,13 +76,13 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     diskann::load_aligned_bin<T>(query_file_prefix + ".fbin", query, query_num, query_dim, query_aligned_dim);
 
     // load compressed query vectors if they exist
-    T *compressed_query = nullptr;
+    CT *compressed_query = nullptr;
     size_t compressed_num, compressed_query_dim, aligned_compressed_query_dim;
     auto compressed_query_file = query_file_prefix + "_compressed.fbin";
     if (file_exists(compressed_query_file)) {
-        diskann::load_aligned_bin<T>(compressed_query_file, compressed_query,
-                                     compressed_num, compressed_query_dim,
-                                     aligned_compressed_query_dim);
+        diskann::load_aligned_bin<CT>(compressed_query_file, compressed_query,
+                                      compressed_num, compressed_query_dim,
+                                      aligned_compressed_query_dim);
         if (compressed_num != query_num) {
             throw diskann::ANNException("Compressed points num != original vectors num", -1);
         }
@@ -125,8 +125,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     reader.reset(new LinuxAlignedFileReader());
 #endif
 
-    std::unique_ptr<diskann::PQFlashIndex<T, LabelT>> _pFlashIndex(
-        new diskann::PQFlashIndex<T, LabelT>(reader, metric));
+    std::unique_ptr<diskann::PQFlashIndex<T, CT, LabelT>> _pFlashIndex(
+       new diskann::PQFlashIndex<T, CT, LabelT>(reader, metric));
 
     int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str());
 
@@ -342,7 +342,7 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
 
 int main(int argc, char **argv)
 {
-    std::string data_type, dist_fn, index_path_prefix, result_path_prefix, query_file, gt_file, filter_label,
+    std::string data_type, comp_data_type, dist_fn, index_path_prefix, result_path_prefix, query_file, gt_file, filter_label,
         label_type, query_filters_file;
     uint32_t num_threads, K, W, num_nodes_to_cache, search_io_limit;
     std::vector<uint32_t> Lvec;
@@ -358,6 +358,8 @@ int main(int argc, char **argv)
         // Required parameters
         po::options_description required_configs("Required");
         required_configs.add_options()("data_type", po::value<std::string>(&data_type)->required(),
+                                       program_options_utils::DATA_TYPE_DESCRIPTION);
+        required_configs.add_options()("comp_data_type", po::value<std::string>(&comp_data_type)->default_value("float"),
                                        program_options_utils::DATA_TYPE_DESCRIPTION);
         required_configs.add_options()("dist_fn", po::value<std::string>(&dist_fn)->required(),
                                        program_options_utils::DISTANCE_FUNCTION_DESCRIPTION);
@@ -479,15 +481,15 @@ int main(int argc, char **argv)
         if (!query_filters.empty() && label_type == "ushort")
         {
             if (data_type == std::string("float"))
-                return search_disk_index<float, uint16_t>(
+                return search_disk_index<float, float, uint16_t>(
                     metric, index_path_prefix, result_path_prefix, query_file, gt_file, num_threads, K, W,
                     num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data);
             else if (data_type == std::string("int8"))
-                return search_disk_index<int8_t, uint16_t>(
+                return search_disk_index<int8_t, int8_t, uint16_t>(
                     metric, index_path_prefix, result_path_prefix, query_file, gt_file, num_threads, K, W,
                     num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data);
             else if (data_type == std::string("uint8"))
-                return search_disk_index<uint8_t, uint16_t>(
+                return search_disk_index<uint8_t, uint8_t, uint16_t>(
                     metric, index_path_prefix, result_path_prefix, query_file, gt_file, num_threads, K, W,
                     num_nodes_to_cache, search_io_limit, Lvec, fail_if_recall_below, query_filters, use_reorder_data);
             else
@@ -496,12 +498,28 @@ int main(int argc, char **argv)
                 return -1;
             }
         }
-        else
-        {
+        else {
             if (data_type == std::string("float"))
-                return search_disk_index<float>(metric, index_path_prefix, result_path_prefix, query_file, gt_file,
-                                                num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
-                                                fail_if_recall_below, query_filters, use_reorder_data);
+                if (comp_data_type == std::string("float"))
+                    return search_disk_index<float, float>(metric, index_path_prefix,
+                                                           result_path_prefix, query_file, gt_file,
+                                                           num_threads, K, W, num_nodes_to_cache,
+                                                           search_io_limit, Lvec,
+                                                           fail_if_recall_below, query_filters,
+                                                           use_reorder_data);
+                else if (comp_data_type == std::string("uint8"))
+                    return search_disk_index<float, uint8_t>(metric, index_path_prefix,
+                                                             result_path_prefix, query_file, gt_file,
+                                                             num_threads, K, W, num_nodes_to_cache,
+                                                             search_io_limit, Lvec,
+                                                             fail_if_recall_below, query_filters,
+                                                             use_reorder_data);
+                else {
+                    std::cerr << "Unsupported comp data type. Use float or uint8" << std::endl;
+                    return -1;
+                }
+
+
             else if (data_type == std::string("int8"))
                 return search_disk_index<int8_t>(metric, index_path_prefix, result_path_prefix, query_file, gt_file,
                                                  num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
@@ -510,8 +528,7 @@ int main(int argc, char **argv)
                 return search_disk_index<uint8_t>(metric, index_path_prefix, result_path_prefix, query_file, gt_file,
                                                   num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec,
                                                   fail_if_recall_below, query_filters, use_reorder_data);
-            else
-            {
+            else {
                 std::cerr << "Unsupported data type. Use float or int8 or uint8" << std::endl;
                 return -1;
             }

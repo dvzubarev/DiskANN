@@ -97,8 +97,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     reader.reset(new LinuxAlignedFileReader());
 #endif
 
-    std::unique_ptr<diskann::PQFlashIndex<T, LabelT>> _pFlashIndex(
-        new diskann::PQFlashIndex<T, LabelT>(reader, metric));
+    std::unique_ptr<diskann::PQFlashIndex<T, T, LabelT>> _pFlashIndex(
+         new diskann::PQFlashIndex<T, T, LabelT>(reader, metric));
 
     int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str());
 

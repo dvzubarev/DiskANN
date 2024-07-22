@@ -41,7 +41,7 @@ const uint32_t NUM_NODES_TO_CACHE = 250000;
 const uint32_t WARMUP_L = 20;
 const uint32_t NUM_KMEANS_REPS = 12;
 
-template <typename T, typename LabelT> class PQFlashIndex;
+template <typename T, typename CT, typename LabelT> class PQFlashIndex;
 
 DISKANN_DLLEXPORT double get_memory_budget(const std::string &mem_budget_str);
 DISKANN_DLLEXPORT double get_memory_budget(double search_ram_budget_in_gb);
@@ -84,8 +84,8 @@ DISKANN_DLLEXPORT int build_merged_vamana_index(std::string base_file, diskann::
                                                 const std::string &labels_to_medoids_file = std::string(""),
                                                 const std::string &universal_label = "", const uint32_t Lf = 0);
 
-template <typename T, typename LabelT>
-DISKANN_DLLEXPORT uint32_t optimize_beamwidth(std::unique_ptr<diskann::PQFlashIndex<T, LabelT>> &_pFlashIndex,
+template <typename T, typename CT, typename LabelT>
+DISKANN_DLLEXPORT uint32_t optimize_beamwidth(std::unique_ptr<diskann::PQFlashIndex<T, CT, LabelT>> &_pFlashIndex,
                                               T *tuning_sample, uint64_t tuning_sample_num,
                                               uint64_t tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
                                               uint32_t start_bw = 2);
