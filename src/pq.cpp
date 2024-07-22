@@ -1099,7 +1099,7 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
 {
     size_t train_size, train_dim;
     float *train_data;
-    if (!file_exists(codebook_prefix))
+    if (!file_exists(pq_pivots_path))
     {
         // instantiates train_data with random sample updates train_size
         gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size, train_dim);

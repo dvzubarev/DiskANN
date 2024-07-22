@@ -1174,7 +1174,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     std::string index_prefix_path(indexFilePath);
     std::string labels_file_to_use = index_prefix_path + "_label_formatted.txt";
     std::string pq_pivots_path_base = codebook_prefix;
-    std::string pq_pivots_path = file_exists(pq_pivots_path_base) ? pq_pivots_path_base + "_pq_pivots.bin"
+    std::string pq_pivots_path = file_exists(pq_pivots_path_base) ? pq_pivots_path_base
                                                                   : index_prefix_path + "_pq_pivots.bin";
     std::string pq_compressed_vectors_path = index_prefix_path + "_pq_compressed.bin";
     std::string mem_index_path = index_prefix_path + "_mem.index";
