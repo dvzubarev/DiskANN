@@ -2,15 +2,17 @@
   description = "DiskAnn";
 
   inputs = {
-    textapp-pkgs.url = "git+ssh://git@tsa04.isa.ru/textapp/textapp-pkgs";
+    nixpkgs.url = "nixpkgs";
   };
 
-  outputs = { self, textapp-pkgs }:
-    let pkgs = import textapp-pkgs.inputs.nixpkgs {
+  outputs = { self, nixpkgs }:
+    let pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ textapp-pkgs.overlays.default
-                       self.overlays.default ];
-          config = textapp-pkgs.passthru.pkgs-config;
+          overlays = [ self.overlays.default ];
+          config = {
+            allowUnfree = true;
+            cudaSupport=true;
+          };
         };
     in {
       overlays.default = final: prev: {
