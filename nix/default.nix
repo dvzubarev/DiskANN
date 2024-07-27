@@ -7,7 +7,8 @@
   boost,
   mkl,
   gperftools,
-  llvmPackages ? null,
+  faiss-git,
+  llvmPackages
 }:
 stdenv.mkDerivation {
   pname = "diskann";
@@ -17,8 +18,9 @@ stdenv.mkDerivation {
   hardeningDisable = [ "all" ];
 
   nativeBuildInputs = [cmake];
-  buildInputs=[libaio boost mkl gperftools]
-              ++ lib.optional (llvmPackages != null) llvmPackages.openmp.dev;
+  buildInputs=
+    [libaio boost mkl gperftools faiss-git] ++
+    lib.optionals stdenv.cc.isClang [llvmPackages.openmp];
   cmakeFlags = [
     "-DOMP_PATH=${mkl}/lib"
     "-DMKL_PATH=${mkl}/lib"

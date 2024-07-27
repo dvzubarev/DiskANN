@@ -90,6 +90,8 @@ else()
     endif()
 endif()
 
+find_package(faiss REQUIRED)
+
 # DiskANN core uses header-only libraries. Only DiskANN tools need program_options which has a linker library,
 # but its size is small. Reduce number of dependent DLLs by linking statically.
 if (MSVC)
@@ -190,7 +192,8 @@ else()
         add_compile_options(-m64 -Wl,--no-as-needed)
     endif()
     if (NOT PYBIND)
-        link_libraries(mkl_intel_ilp64 mkl_intel_thread mkl_core iomp5 pthread m dl)
+        #faiss crashes when linking with ilp64
+        link_libraries(mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m dl)
     else()
         # static linking for python so as to minimize customer dependency issues
         link_libraries(
@@ -206,7 +209,7 @@ else()
     endif()
 endif()
 
-add_definitions(-DMKL_ILP64)
+# add_definitions(-DMKL_ILP64)
 
 # Section for tcmalloc. The DiskANN tools are always linked to tcmalloc. For Windows, they also need to
 # force-include the _tcmalloc symbol for enabling tcmalloc.

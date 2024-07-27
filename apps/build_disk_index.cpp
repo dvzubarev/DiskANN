@@ -17,6 +17,8 @@ int main(int argc, char **argv)
 {
     std::string data_type, dist_fn, data_path, index_path_prefix, codebook_prefix, label_file, universal_label,
         label_type;
+    std::string faiss_index;
+
     uint32_t num_threads, R, L, disk_PQ, build_PQ, QD, Lf, filter_threshold;
     float B, M;
     bool append_reorder_data = false;
@@ -46,6 +48,9 @@ int main(int argc, char **argv)
 
         // Optional parameters
         po::options_description optional_configs("Optional");
+        optional_configs.add_options()("faiss_index",
+                                       po::value<std::string>(&faiss_index),
+                                       "Faiss index factory string");
         optional_configs.add_options()("num_threads,T",
                                        po::value<uint32_t>(&num_threads)->default_value(omp_get_num_procs()),
                                        program_options_utils::NUMBER_THREADS_DESCRIPTION);
@@ -146,15 +151,15 @@ int main(int argc, char **argv)
             if (data_type == std::string("int8"))
                 return diskann::build_disk_index<int8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                          metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                         universal_label, filter_threshold, Lf);
+                                                         universal_label, filter_threshold, faiss_index, Lf);
             else if (data_type == std::string("uint8"))
                 return diskann::build_disk_index<uint8_t, uint16_t>(
                     data_path.c_str(), index_path_prefix.c_str(), params.c_str(), metric, use_opq, codebook_prefix,
-                    use_filters, label_file, universal_label, filter_threshold, Lf);
+                                                                    use_filters, label_file, universal_label, filter_threshold, faiss_index, Lf);
             else if (data_type == std::string("float"))
                 return diskann::build_disk_index<float, uint16_t>(
                     data_path.c_str(), index_path_prefix.c_str(), params.c_str(), metric, use_opq, codebook_prefix,
-                    use_filters, label_file, universal_label, filter_threshold, Lf);
+                    use_filters, label_file, universal_label, filter_threshold, faiss_index, Lf);
             else
             {
                 diskann::cerr << "Error. Unsupported data type" << std::endl;
@@ -166,15 +171,15 @@ int main(int argc, char **argv)
             if (data_type == std::string("int8"))
                 return diskann::build_disk_index<int8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                          metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                         universal_label, filter_threshold, Lf);
+                                                         universal_label, filter_threshold, faiss_index, Lf);
             else if (data_type == std::string("uint8"))
                 return diskann::build_disk_index<uint8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                           metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                          universal_label, filter_threshold, Lf);
+                                                          universal_label, filter_threshold, faiss_index, Lf);
             else if (data_type == std::string("float"))
                 return diskann::build_disk_index<float>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                         metric, use_opq, codebook_prefix, use_filters, label_file,
-                                                        universal_label, filter_threshold, Lf);
+                                                        universal_label, filter_threshold, faiss_index, Lf);
             else
             {
                 diskann::cerr << "Error. Unsupported data type" << std::endl;

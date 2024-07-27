@@ -98,6 +98,7 @@ DISKANN_DLLEXPORT int build_disk_index(
     bool use_filters = false,
     const std::string &label_file = std::string(""), // default is empty string for no label_file
     const std::string &universal_label = "", const uint32_t filter_threshold = 0,
+    const std::string& faiss_factory_str = "",
     const uint32_t Lf = 0); // default is empty string for no universal label
 
 template <typename T>

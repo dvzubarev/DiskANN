@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include <faiss/IndexFlatCodes.h>
 #include "boost_dynamic_bitset_fwd.h"
 // #include "boost/dynamic_bitset.hpp"
 #include "tsl/robin_set.h"
@@ -170,9 +171,11 @@ template <typename T, typename CT=T> class SSDThreadData
   public:
     SSDQueryScratch<T> scratch;
     BasicScrath<CT> compressed_data_scratch;
+    std::unique_ptr<faiss::FlatCodesDistanceComputer> faiss_dist_comp;
     IOContext ctx;
 
-    SSDThreadData(size_t aligned_dim, size_t aligned_compressed_dim, size_t visited_reserve);
+    SSDThreadData(size_t aligned_dim, size_t aligned_compressed_dim,
+                  faiss::IndexFlatCodes* faiss_storage, size_t visited_reserve);
     void clear();
 };
 

@@ -143,11 +143,15 @@ template <typename T> void BasicScrath<T>::reset()
 
 template <typename T, typename CT>
 SSDThreadData<T, CT>::SSDThreadData(size_t aligned_dim, size_t aligned_compressed_dim,
+                                    faiss::IndexFlatCodes* faiss_storage,
                                     size_t visited_reserve) : scratch(aligned_dim, visited_reserve),
                                                               compressed_data_scratch(aligned_compressed_dim)
 
 
 {
+    if (faiss_storage){
+        faiss_dist_comp.reset(faiss_storage->get_FlatCodesDistanceComputer());
+    }
 }
 
 template <typename T, typename CT> void SSDThreadData<T, CT>::clear()

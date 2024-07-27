@@ -16,6 +16,7 @@
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
 #include "abstract_data_store.h"
+#include "faiss/IndexFlatCodes.h"
 
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
@@ -84,6 +85,14 @@ template <typename T, typename CT = T, typename LabelT = uint32_t> class PQFlash
 
     DISKANN_DLLEXPORT void cached_beam_search(const T *query1, const CT *compressed_query1, const uint64_t k_search, const uint64_t l_search,
                                               uint64_t *indices, float *distances, const uint64_t beam_width, QueryStats *stats);
+
+    //search with faiss indexes
+    DISKANN_DLLEXPORT void faiss_cached_beam_search(const T *query1, const uint64_t k_search,
+                                                    const uint64_t l_search,
+                                                    uint64_t *indices,
+                                                    float *distances,
+                                                    const uint64_t beam_width,
+                                                    QueryStats *stats);
 
     DISKANN_DLLEXPORT void cached_beam_search_impl(const T *query1,
                                                    SSDThreadData<T, CT>* req_data,
@@ -203,6 +212,10 @@ template <typename T, typename CT = T, typename LabelT = uint32_t> class PQFlash
     uint64_t _n_chunks;
     FixedChunkPQTable _pq_table;
 
+    //faiss quantizers
+    std::unique_ptr<faiss::IndexFlatCodes> _faiss_storage;
+    //centroid for queries vectors
+    std::unique_ptr<float[]> _faiss_centroid;
 
     //Compressed data
     std::shared_ptr<AbstractDataStore<CT>> _compressed_data;

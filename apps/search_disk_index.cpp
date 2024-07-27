@@ -193,9 +193,9 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
     diskann::cout.precision(2);
 
     std::string recall_string = "Recall@" + std::to_string(recall_at);
-    diskann::cout << std::setw(6) << "L" << std::setw(12) << "Beamwidth" << std::setw(16) << "QPS" << std::setw(16)
-                  << "Mean Latency" << std::setw(16) << "99.9 Latency" << std::setw(16) << "Mean IOs" << std::setw(16)
-                  << "CPU (s)";
+    diskann::cout << std::setw(6) << "L" << std::setw(12) << "Beamwidth" << std::setw(16) << "QPS" << std::setw(19)
+    << "Mean Latency (μs)" << std::setw(16) << "99.9 Latency" << std::setw(16) << "Mean IOs" << std::setw(16)
+    << "CPU (μs)";
     if (calc_recall_flag)
     {
         diskann::cout << std::setw(16) << recall_string << std::endl;

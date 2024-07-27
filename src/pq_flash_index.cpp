@@ -10,6 +10,9 @@
 #include "cosine_similarity.h"
 #include "in_mem_data_store.h"
 
+#include <faiss/index_io.h>
+#include <faiss/IndexNeuralNetCodec.h>
+
 
 #ifdef _WINDOWS
 #include "windows_aligned_file_reader.h"
@@ -136,6 +139,7 @@ void PQFlashIndex<T, CT, LabelT>::setup_thread_data(uint64_t nthreads, uint64_t 
         {
             SSDThreadData<T, CT> *data = new SSDThreadData<T, CT>(this->_aligned_dim,
                                                                   this->_aligned_compressed_vec_dim,
+                                                                  this->_faiss_storage.get(),
                                                                   visited_reserve);
             this->reader->register_thread();
             data->ctx = this->reader->get_ctx();
@@ -807,6 +811,7 @@ int PQFlashIndex<T, CT, LabelT>::load_from_separate_paths(uint32_t num_threads, 
 {
 #endif
     std::string pq_table_bin = pivots_filepath;
+    std::string faiss_mcq_meta_file = std::string(pivots_filepath) + ".meta";
     std::string pq_compressed_vectors = compressed_filepath;
     std::string _disk_index_file = index_filepath;
     this->_disk_index_file = index_filepath;
@@ -819,29 +824,66 @@ int PQFlashIndex<T, CT, LabelT>::load_from_separate_paths(uint32_t num_threads, 
     std::string labels_map_file = std ::string(_disk_index_file) + "_labels_map.txt";
     size_t num_pts_in_label_file = 0;
 
-    size_t pq_file_dim, pq_file_num_centroids;
+    //Dimension of original vectors is read from pq tables.
+    //We have to keep pq_table_bin file around,
+    //since its the only place where we can obtain original dimension.
+    //meta from index (disk_ndims) is not suitable see comment below.
+    size_t original_vecs_dim;
 #ifdef EXEC_ENV_OLS
     get_bin_metadata(files, pq_table_bin, pq_file_num_centroids, pq_file_dim, METADATA_SIZE);
 #else
-    //pq_file_dim is dimension of original vectors
-    //We have to keep this file around, since its the only place where we can obtain original dimension
-    //meta from index (disk_ndims) is not suitable see comment below.
-    get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim, METADATA_SIZE);
+
+    if (file_exists(faiss_mcq_meta_file)){
+        //pq_table_bin is faiss index file
+        size_t compressed_vec_size;
+        get_bin_metadata(faiss_mcq_meta_file, compressed_vec_size, original_vecs_dim);
+        size_t temp, center_dim;
+        float* cd;
+        diskann::load_bin<float>(faiss_mcq_meta_file, cd, temp, center_dim, 8);
+        _faiss_centroid.reset(cd);
+
+        if ((center_dim != original_vecs_dim) || (temp != 1)){
+            diskann::cout << "Error reading mcq meta file " << faiss_mcq_meta_file << ". file_dim  = " << center_dim
+            << ", file_cols = " << temp << " but expecting " << original_vecs_dim << " entries in 1 dimension.";
+            throw diskann::ANNException("Error reading mcq meta file.", -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
+    } else{
+        size_t pq_file_num_centroids;
+        get_bin_metadata(pq_table_bin, pq_file_num_centroids, original_vecs_dim, METADATA_SIZE);
+        if (pq_file_num_centroids != 256)
+        {
+            diskann::cout << "Error. Number of PQ centroids is not 256. Exiting." << std::endl;
+            return -1;
+        }
+    }
 #endif
 
-    if (pq_file_num_centroids != 256)
-    {
-        diskann::cout << "Error. Number of PQ centroids is not 256. Exiting." << std::endl;
-        return -1;
-    }
 
-    this->_data_dim = pq_file_dim;
+    this->_data_dim = original_vecs_dim;
     // will change later if we use PQ on disk or if we are using
     // inner product without PQ
     this->_disk_bytes_per_point = this->_data_dim * sizeof(T);
     this->_aligned_dim = ROUND_UP(this->_data_dim, 8);
 
-    if(file_exists(pq_compressed_vectors)){
+    if (file_exists(faiss_mcq_meta_file)){
+        //we use faiss index for compressed vectors
+        std::unique_ptr<faiss::Index> index;
+        index.reset(faiss::read_index(compressed_filepath));
+        if (faiss::IndexFlatCodes* flat_codes_index = dynamic_cast<faiss::IndexFlatCodes*>(index.get())) {
+            this->_faiss_storage.reset(flat_codes_index);
+            this->_num_points = _faiss_storage->ntotal;
+            index.release();
+            diskann::cout
+            << "Loaded faiss index with compressed vectors. #points: " << _num_points
+            << " #dim: " << _data_dim << " #aligned_dim: " << _aligned_dim
+            << " #compressed_dim: " << _faiss_storage->d<< std::endl;
+
+        }else {
+            throw diskann::ANNException("Unknown faiss index is read from " +
+                                        std::string(compressed_filepath), -1);
+        }
+
+    }else if(file_exists(pq_compressed_vectors)){
 
         size_t npts_u64, nchunks_u64;
 #ifdef EXEC_ENV_OLS
@@ -1008,7 +1050,7 @@ int PQFlashIndex<T, CT, LabelT>::load_from_separate_paths(uint32_t num_threads, 
         }
     }
 
-    if (file_exists(pq_compressed_vectors)){
+    if (file_exists(pq_compressed_vectors) && !file_exists(faiss_mcq_meta_file)){
 #ifdef EXEC_ENV_OLS
     _pq_table.load_pq_centroid_bin(files, pq_table_bin.c_str(), this->_n_chunks);
 #else
@@ -1310,22 +1352,21 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search(const T *query1, const uint
 
 template <typename T, typename CT, typename LabelT>
 void PQFlashIndex<T, CT, LabelT>::cached_beam_search(const T *query1, const uint64_t k_search, const uint64_t l_search,
-                                                 uint64_t *indices, float *distances, const uint64_t beam_width,
-                                                 const bool use_filter, const LabelT &filter_label,
-                                                 const uint32_t io_limit, const bool use_reorder_data,
-                                                 QueryStats *stats)
+                                                     uint64_t *indices, float *distances, const uint64_t beam_width,
+                                                     const bool use_filter, const LabelT &filter_label,
+                                                     const uint32_t io_limit, const bool use_reorder_data,
+                                                     QueryStats *stats)
 {
-
-    uint64_t num_sector_per_nodes = DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
-    if (beam_width > num_sector_per_nodes * defaults::MAX_N_SECTOR_READS)
-        throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
-                           __LINE__);
+    if (_faiss_storage){
+        faiss_cached_beam_search(query1, k_search, l_search, indices, distances, beam_width, stats);
+        return;
+    }
+    Timer query_timer;
 
     ScratchStoreManager<SSDThreadData<T, CT>> manager(this->_thread_data);
-    auto data = manager.scratch_space();
-    IOContext &ctx = data->ctx;
-    auto query_scratch = &(data->scratch);
-    auto pq_query_scratch = query_scratch->pq_scratch();
+    SSDThreadData<T, CT>* data = manager.scratch_space();
+    SSDQueryScratch<T>* query_scratch = &(data->scratch);
+    PQScratch<T>* pq_query_scratch = query_scratch->pq_scratch();
 
     // reset query scratch
     query_scratch->reset();
@@ -1369,10 +1410,13 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search(const T *query1, const uint
 
 
     // query <-> PQ chunk centers distances
+    Timer cpu_timer;
     _pq_table.preprocess_query(query_rotated); // center the query and rotate if
                                                // we have a rotation matrix
     float *pq_dists = pq_query_scratch->aligned_pqtable_dist_scratch;
     _pq_table.populate_chunk_distances(query_rotated, pq_dists);
+    if (stats)
+        stats->cpu_us += (float)cpu_timer.elapsed();
 
     // query <-> neighbor list
     uint8_t *pq_coord_scratch = pq_query_scratch->aligned_pq_coord_scratch;
@@ -1388,6 +1432,9 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search(const T *query1, const uint
                             beam_width,
                             use_filter, filter_label,
                             io_limit, use_reorder_data, stats);
+    if (stats != nullptr){
+        stats->total_us = (float)query_timer.elapsed();
+    }
 }
 
 //overload for searching on externally compressed vectors
@@ -1396,14 +1443,10 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search(const T *query1, const CT *
                                                  uint64_t *indices, float *distances, const uint64_t beam_width, QueryStats *stats)
 {
 
-    uint64_t num_sector_per_nodes = DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
-    if (beam_width > num_sector_per_nodes * defaults::MAX_N_SECTOR_READS)
-        throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
-                           __LINE__);
+    Timer query_timer;
 
     ScratchStoreManager<SSDThreadData<T, CT>> manager(this->_thread_data);
     auto data = manager.scratch_space();
-    IOContext &ctx = data->ctx;
     auto query_scratch = &(data->scratch);
     auto compressed_query_scratch = &(data->compressed_data_scratch);
     //pq_query_scratch holds alse query_float that seems to be needed
@@ -1486,6 +1529,99 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search(const T *query1, const CT *
                             k_search, l_search, indices, distances,
                             beam_width,
                             false, dummy_filter, io_limit, false, stats);
+
+    if (stats != nullptr){
+        stats->total_us = (float)query_timer.elapsed();
+    }
+}
+
+template <typename T, typename CT, typename LabelT>
+void PQFlashIndex<T, CT, LabelT>::faiss_cached_beam_search(const T *query1,
+                                                           const uint64_t k_search,
+                                                           const uint64_t l_search,
+                                                           uint64_t *indices,
+                                                           float *distances, const uint64_t beam_width,
+                                                           QueryStats *stats)
+{
+    Timer query_timer;
+
+    ScratchStoreManager<SSDThreadData<T, CT>> manager(this->_thread_data);
+    SSDThreadData<T, CT>* data = manager.scratch_space();
+    SSDQueryScratch<T>* query_scratch = &(data->scratch);
+    PQScratch<T>* pq_query_scratch = query_scratch->pq_scratch();
+
+    // reset query scratch
+    query_scratch->reset();
+
+    T *aligned_query_T = query_scratch->aligned_query_T();
+    //use buffer for from pq_query_scratch since it has float type
+    float *prepared_query = pq_query_scratch->aligned_query_float;
+
+
+    //TODO check that metrics are the same
+    //_faiss_index->metric_type
+
+    for (size_t i = 0; i < this->_data_dim; i++){
+        aligned_query_T[i] = query1[i];
+        prepared_query[i] = query1[i] - _faiss_centroid[i];
+    }
+
+
+    _faiss_storage->verbose = true;
+
+    faiss::FlatCodesDistanceComputer* dist_comp = data->faiss_dist_comp.get();
+    Timer cpu_timer;
+    dist_comp->set_query(prepared_query);
+    if (stats)
+        stats->cpu_us += (float)cpu_timer.elapsed();
+
+
+    // lambda to batch compute query<-> node distances in PQ space
+    auto compute_dists = [this, dist_comp](const uint32_t *ids, const uint64_t n_ids,
+                                           float *dists_out) {
+
+        for (int i = 0; i < n_ids; ++i){
+            const uint8_t* code = dist_comp->codes + ids[i] * dist_comp->code_size;
+            *(dists_out + i) = dist_comp->distance_to_code(code);
+        }
+
+    };
+   
+    std::function<void(const uint32_t*, const uint64_t, float *)> dist_func = compute_dists;
+    if (dynamic_cast<faiss::IndexQINCo*>(_faiss_storage.get())){
+        //this computer has special implementation of distances_batch_4,
+        //use it to speed up qinco decompression
+        dist_func = [this, dist_comp](const uint32_t *ids, const uint64_t n_ids,
+                                      float *dists_out)
+            {
+
+                auto batches_cnt = n_ids / 4;
+                for (int b = 0; b < batches_cnt; ++b){
+                    int i = b * 4;
+                    dist_comp->distances_batch_4(ids[i], ids[i+1], ids[i+2], ids[i+3],
+                                                 dists_out[i], dists_out[i+1], dists_out[i+2],
+                                                 dists_out[i+3]);
+                }
+                int leftover = n_ids % 4;
+                for (int l = 0; l < leftover; ++l){
+                    int i = 4 * batches_cnt + l;
+                    const uint8_t* code = dist_comp->codes + ids[i] * dist_comp->code_size;
+                    *(dists_out + i) = dist_comp->distance_to_code(code);
+                }
+            };
+    }
+
+    float query_norm = 0;
+    LabelT dummy_filter = 0;
+    auto io_limit = std::numeric_limits<uint32_t>::max();
+    cached_beam_search_impl(query1, data, dist_func, query_norm,
+                            k_search, l_search, indices, distances,
+                            beam_width,
+                            false, dummy_filter,
+                            io_limit, false, stats);
+    if (stats != nullptr){
+        stats->total_us = (float)query_timer.elapsed();
+    }
 }
 
 
@@ -1505,7 +1641,12 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search_impl(const T *query1,
                                                           const bool use_reorder_data,
                                                           QueryStats *stats)
 {
-    Timer query_timer, io_timer, cpu_timer;
+    uint64_t num_sector_per_nodes = DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
+    if (beam_width > num_sector_per_nodes * defaults::MAX_N_SECTOR_READS)
+        throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
+                           __LINE__);
+
+    Timer io_timer, cpu_timer;
 
     auto query_scratch = &(req_data->scratch);
     T *aligned_query_T = query_scratch->aligned_query_T();
@@ -1867,10 +2008,7 @@ void PQFlashIndex<T, CT, LabelT>::cached_beam_search_impl(const T *query1,
     ctx.m_completeCount = 0;
 #endif
 
-    if (stats != nullptr)
-    {
-        stats->total_us = (float)query_timer.elapsed();
-    }
+   
 }
 
 // range search returns results of all neighbors within distance of range.
