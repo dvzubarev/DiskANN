@@ -2,7 +2,7 @@
   description = "DiskAnn";
 
   inputs = {
-    nixpkgs.url = "nixpkgs/48bacf585a51d953def8bff32087970f273052e2";
+    nixpkgs.url = "nixpkgs/c19d62ad2265b16e2199c5feb4650fe459ca1c46";
     faiss.url = "github:dvzubarev/faiss";
   };
 

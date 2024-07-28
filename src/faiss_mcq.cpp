@@ -162,11 +162,8 @@ int encode_vecs_with_mcq(const std::string &data_file,
 
     size_t block_size = num_points <= BLOCK_SIZE ? num_points : BLOCK_SIZE;
     if (faiss_factory_str == "qinco"){
-        block_size = 50000;
+        block_size = 10000;
     }
-
-    // std::vector<uint8_t> block_compressed;
-    // block_compressed.resize(block_size * compressed_vec_size, 0);
 
     std::vector<float> block_data_float(block_size * dim);
 
